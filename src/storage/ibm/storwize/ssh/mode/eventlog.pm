@@ -25,11 +25,10 @@ use base qw(centreon::plugins::mode);
 use strict;
 use warnings;
 use DateTime;
-use Time::Piece;
 
 sub new {
     my ($class, %options) = @_;
-    my $self = $class->SUPER::new(package => __PACKAGE__, %options);
+    my $self = $class->SUPER::new(package => __PACKAGE__, %options, force_new_perfdata => 1);
     bless $self, $class;
 
     $options{options}->add_options(arguments => { 
@@ -73,24 +72,35 @@ sub run {
     my $result = $options{custom}->get_hasharray(content => $content, delim => ':');
 
     my ($num_eventlog_checked, $num_errors) = (0, 0);
-    foreach (@$result) {
+    foreach my $event (@$result) {
         $num_eventlog_checked++;
         if (defined($self->{option_results}->{filter_message}) && $self->{option_results}->{filter_message} ne '' &&
-            $_->{description} !~ /$self->{option_results}->{filter_message}/) {
-            $self->{output}->output_add(long_msg => "skipping '" . $_->{description} . "': no matching filter description.", debug => 1);
+            $event->{description} !~ /$self->{option_results}->{filter_message}/) {
+            $self->{output}->output_add(long_msg => "skipping '" . $event->{description} . "': no matching filter description.", debug => 1);
             next;
         }
         if (defined($self->{option_results}->{filter_event_id}) && $self->{option_results}->{filter_event_id} ne '' &&
-            $_->{event_id} !~ /$self->{option_results}->{filter_event_id}/) {
-            $self->{output}->output_add(long_msg => "skipping '" . $_->{event_id} . "': no matching filter event id.", debug => 1);
+            $event->{event_id} !~ /$self->{option_results}->{filter_event_id}/) {
+            $self->{output}->output_add(long_msg => "skipping '" . $event->{event_id} . "': no matching filter event id.", debug => 1);
             next;
         }
 
+    my @array = ( $event->{last_timestamp} =~ m/../g ); # format expected is YYMMDDHHMMSS
+    my $date = DateTime->new(
+	    "year"      => "20" . $array[0], # DateTime expect 4 digit year, as this is log the chance of decade old data is slim.
+	    "month"     => $array[1],
+        "day"       => $array[2],
+        "hour"      => $array[3],
+        "minute"    => $array[4],
+        "second"    => $array[5],
+
+);
+
         $self->{output}->output_add(
             long_msg => sprintf(
-                '%s : %s - %s', 
-                scalar(localtime(Time::Piece->strptime($_->{last_timestamp}, '%y%m%d%H%M%S'))),
-                $_->{event_id}, $_->{description}
+                '%s : %s - %s',
+                $date->strftime("%a %b %d %T %Y"),
+                $event->{event_id}, $event->{description}
             )
         );
         $num_errors++;
@@ -102,8 +112,9 @@ sub run {
         severity => $exit,
         short_msg => sprintf("%d problem detected (use verbose for more details)", $num_errors)
     );
+
     $self->{output}->perfdata_add(
-        label => 'problems',
+        nlabel => 'eventlogs.problems.count',
         value => $num_errors,
         warning => $self->{perfdata}->get_perfdata_for_output(label => 'warning'),
         critical => $self->{perfdata}->get_perfdata_for_output(label => 'critical'),
